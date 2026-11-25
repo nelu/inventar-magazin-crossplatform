@@ -1,0 +1,120 @@
+name: Resolve Magazin tooling and Nuitka cache
+description: Select a compatible Docker image and optionally publish tooling and warm the cache
+inputs:
+  platform:
+    description: linux or windows
+    required: true
+  prepare:
+    description: Publish missing tooling and save the warmed Nuitka cache
+    default: 'false'
+outputs:
+  image:
+    description: Local tooling image reference
+    value: ${{ steps.tooling.outputs.local }}
+runs:
+  using: composite
+  steps:
+    - name: Identify the platform image and cache
+      id: tooling
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        PREPARE: ${{ inputs.prepare }}
+      run: |
+        files=("Dockerfile.$PLATFORM" requirements.txt nuitka-build.py)
+        case "$PLATFORM" in
+          linux) files+=(build-linux.sh) ;;
+          windows) files+=(build-windows.ps1) ;;
+          *) echo "Unsupported tooling platform: $PLATFORM" >&2; exit 1 ;;
+        esac
+        if [[ $PREPARE == true ]]; then
+          fingerprint=$(sha256sum -- "${files[@]}" | sha256sum)
+          echo "fingerprint=${fingerprint%% *}" >> "$GITHUB_OUTPUT"
+        fi
+        echo "remote=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/magazin-tooling:$PLATFORM" >> "$GITHUB_OUTPUT"
+        echo "local=magazin-tooling:$PLATFORM" >> "$GITHUB_OUTPUT"
+        echo "cache-prefix=nuitka-v2-$PLATFORM-amd64-" >> "$GITHUB_OUTPUT"
+
+    - name: Sign in to GHCR
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ github.token }}
+      run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+    - name: Pull the tooling image
+      id: pull
+      shell: bash
+      env:
+        REMOTE_IMAGE: ${{ steps.tooling.outputs.remote }}
+        LOCAL_IMAGE: ${{ steps.tooling.outputs.local }}
+        FINGERPRINT: ${{ steps.tooling.outputs.fingerprint }}
+      run: |
+        if docker pull "$REMOTE_IMAGE"; then
+          if [[ -z $FINGERPRINT ]] || docker image inspect "$REMOTE_IMAGE" | jq -e --arg fp "$FINGERPRINT" \
+              '.[0].Config.Labels["io.magazin.tooling.fingerprint"] == $fp' > /dev/null; then
+            echo "Using tooling from $REMOTE_IMAGE"
+            docker tag "$REMOTE_IMAGE" "$LOCAL_IMAGE"
+            echo 'hit=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Published tooling fingerprint doesn't match; building locally."
+        else
+          echo "Cannot pull $REMOTE_IMAGE; building locally."
+        fi
+        echo 'hit=false' >> "$GITHUB_OUTPUT"
+
+    - name: Build Linux tooling on a miss
+      if: inputs.platform == 'linux' && steps.pull.outputs.hit != 'true'
+      shell: bash
+      env:
+        MAGAZIN_TOOLING_FINGERPRINT: ${{ steps.tooling.outputs.fingerprint }}
+        MAGAZIN_TOOLING_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+      run: bash build-linux.sh --tooling-only
+
+    - name: Build Windows tooling on a miss
+      if: inputs.platform == 'windows' && steps.pull.outputs.hit != 'true'
+      shell: powershell
+      env:
+        MAGAZIN_TOOLING_FINGERPRINT: ${{ steps.tooling.outputs.fingerprint }}
+        MAGAZIN_TOOLING_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+      run: .\build-windows.ps1 -ToolingOnly -Isolation process
+
+    - name: Publish newly built tooling
+      if: inputs.prepare == 'true' && steps.pull.outputs.hit != 'true'
+      shell: bash
+      env:
+        IMAGE: ${{ steps.tooling.outputs.local }}
+        REMOTE_IMAGE: ${{ steps.tooling.outputs.remote }}
+      run: |
+        docker tag "$IMAGE" "$REMOTE_IMAGE"
+        docker push "$REMOTE_IMAGE"
+
+    - name: Restore Nuitka cache
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: .nuitka-cache
+        key: ${{ steps.tooling.outputs.cache-prefix }}${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: ${{ steps.tooling.outputs.cache-prefix }}
+
+    - name: Warm the Linux Nuitka cache
+      if: inputs.prepare == 'true' && inputs.platform == 'linux' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        MAGAZIN_TOOLING_IMAGE: ${{ steps.tooling.outputs.local }}
+        NUITKA_CACHE_DIRECTORY: .nuitka-cache
+      run: bash build-linux.sh
+
+    - name: Warm the Windows Nuitka cache
+      if: inputs.prepare == 'true' && inputs.platform == 'windows' && steps.cache.outputs.cache-hit != 'true'
+      shell: powershell
+      env:
+        TOOLING_IMAGE: ${{ steps.tooling.outputs.local }}
+      run: .\build-windows.ps1 -Isolation process -ToolingImage $env:TOOLING_IMAGE -CacheDirectory .nuitka-cache
+
+    - name: Save the warmed Nuitka cache
+      if: inputs.prepare == 'true' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: .nuitka-cache
+        key: ${{ steps.cache.outputs.cache-primary-key }}

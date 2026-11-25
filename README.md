@@ -99,9 +99,19 @@ Executabilul onefile a trecut testul de lansare prin X11/Xvfb, deschidere, „Sa
 
 ## Publicare pe GitHub
 
-În secțiunea **Releases** a depozitului GitHub, publică o versiune cu o etichetă precum `v1.2.3` pentru o versiune stabilă sau `v1.2.3-rc.1` pentru o versiune preliminară. Eticheta trebuie să indice un commit care conține `.github/workflows/build-release.yml`. Trimiterea etichetei fără publicarea versiunii nu pornește fluxul.
+În secțiunea **Releases** a depozitului GitHub, publică o versiune cu o etichetă precum `v1.2.3` pentru o versiune stabilă sau `v1.2.3-rc.1` pentru o versiune preliminară. Eticheta trebuie să indice un commit care conține `.github/workflows/build-release.yml`. Trimiterea etichetei fără publicarea versiunii nu pornește compilarea pentru publicare.
 
 GitHub Actions folosește aceleași scripturi Docker ca la compilarea locală și testează și compilează în paralel executabilele Windows și Linux x64. Pe runnerul `windows-2022`, scriptul folosește imaginea de bază LTSC 2022 și izolarea la nivel de proces (`-Isolation process`). După ce ambele compilări trec, fluxul atașează `Magazin.release.exe`, `Magazin-linux-x64.release.tar.gz` și `SHA256SUMS` la versiunea publicată. Versiunea trebuie să permită adăugarea fișierelor după publicare; fișierele cu același nume nu sunt suprascrise. Dacă o compilare eșuează, fluxul nu atașează fișierele.
+
+### Reutilizarea imaginilor și a cache-ului în CI
+
+Același flux, `.github/workflows/build-release.yml`, pregătește imaginile și cache-ul după integrarea unui pull request în `main`. Un push direct în `main` sau închiderea unui pull request fără integrare nu pornește jobul de pregătire. Imaginile sunt publicate în GitHub Container Registry ca `ghcr.io/<owner>/magazin-tooling:linux` și `ghcr.io/<owner>/magazin-tooling:windows`. Prima rulare folosește `GITHUB_TOKEN` pentru a crea pachetul; dacă pachetul există deja, acordă depozitului acces în setările pachetului, la **Manage Actions access**.
+
+Fluxul de pregătire verifică amprenta configurației de compilare pentru a decide dacă trebuie să republice imaginea. La publicarea unei versiuni, fiecare job preia imaginea din GHCR după eticheta platformei. Dacă preluarea eșuează, jobul construiește imaginea local. Imaginea de bază Linux este declarată în `Dockerfile.linux`; pentru Windows, `build-windows.ps1` alege eticheta LTSC în funcție de versiunea gazdei Docker. Trecerea unei etichete la o imagine nouă nu declanșează automat o reconstruire.
+
+Fișierele de lucru Nuitka se salvează cu `actions/cache` pe `main`. Fiecare rulare de pregătire salvează o intrare nouă sub un prefix comun platformei, de exemplu `nuitka-v2-windows-amd64-`. Compilarea unei versiuni restaurează cea mai recentă intrare pentru platforma sa și compilează sursele de pe commitul etichetat. Dacă nu mai există nicio intrare, compilarea folosește un cache gol. Pentru o schimbare incompatibilă a instrumentelor de compilare, mărește versiunea prefixului în `.github/actions/tooling/action.yml`.
+
+### Descărcare și verificare
 
 Pe Linux, descarcă arhiva și `SHA256SUMS` în același director, apoi verifică și pornește executabilul:
 
