@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+tooling_only=false
+case $#:$* in
+    0:) ;;
+    1:--tooling-only) tooling_only=true ;;
+    *) printf 'Usage: %s [--tooling-only]\n' "$0" >&2; exit 2 ;;
+esac
+
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 source_dir=$(pwd -P)
 if command -v cygpath >/dev/null 2>&1; then
@@ -14,11 +21,31 @@ if ! daemon_os=$(docker info --format '{{.OSType}}') || [[ $daemon_os != linux ]
     exit 1
 fi
 
-image=magazin-tooling:linux
+image=${MAGAZIN_TOOLING_IMAGE:-magazin-tooling:linux}
 cache=${NUITKA_CACHE_VOLUME:-magazin-nuitka-cache-linux-x64}
 artifact=Magazin-linux-x64
 release=dist/$artifact.release
-docker build --pull --platform linux/amd64 --tag "$image" --file Dockerfile.linux .
+if [[ -z ${MAGAZIN_TOOLING_IMAGE:-} ]]; then
+    labels=()
+    if [[ -n ${MAGAZIN_TOOLING_FINGERPRINT:-} ]]; then
+        labels+=(--label "io.magazin.tooling.fingerprint=$MAGAZIN_TOOLING_FINGERPRINT")
+    fi
+    if [[ -n ${MAGAZIN_TOOLING_SOURCE:-} ]]; then
+        labels+=(--label "org.opencontainers.image.source=$MAGAZIN_TOOLING_SOURCE")
+    fi
+    docker build --pull --platform linux/amd64 --tag "$image" --file Dockerfile.linux "${labels[@]}" .
+else
+    docker image inspect "$image" >/dev/null
+fi
+if $tooling_only; then exit 0; fi
+
+cache_mount="type=volume,source=$cache,target=/nuitka-cache"
+if [[ -n ${NUITKA_CACHE_DIRECTORY:-} ]]; then
+    mkdir -p -- "$NUITKA_CACHE_DIRECTORY"
+    cache_dir=$(cd -- "$NUITKA_CACHE_DIRECTORY" && pwd -P)
+    if command -v cygpath >/dev/null 2>&1; then cache_dir=$(cygpath -am "$cache_dir"); fi
+    cache_mount="type=bind,source=$cache_dir,target=/nuitka-cache"
+fi
 
 container=
 staging=
@@ -32,7 +59,7 @@ trap 'exit 143' TERM
 
 container=$(docker create --platform linux/amd64 \
     --mount "type=bind,source=$source_dir,target=/app,readonly" \
-    --mount "type=volume,source=$cache,target=/nuitka-cache" \
+    --mount "$cache_mount" \
     "$image")
 docker start "$container" >/dev/null
 while [[ $(docker inspect --format '{{.State.Running}}' "$container") == true ]]; do

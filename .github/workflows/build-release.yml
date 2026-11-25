@@ -1,6 +1,9 @@
-name: Build and attach release assets
+name: Build tooling and release assets
 
 on:
+  pull_request_target:
+    types: [closed]
+    branches: [main]
   release:
     types: [published]
 
@@ -8,11 +11,47 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: build-release-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
+  prepare-tooling:
+    # Only check out the commit already merged into the base repository.
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.merged == true &&
+      github.ref == 'refs/heads/main' &&
+      github.event.pull_request.merge_commit_sha != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: windows
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    concurrency:
+      group: prepare-tooling-${{ matrix.platform }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    # pull_request_target defaults to read-only caching on the default branch.
+    cache-mode: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/tooling
+        with:
+          platform: ${{ matrix.platform }}
+          prepare: 'true'
+
   validate-tag:
+    if: github.event_name == 'release'
     runs-on: ubuntu-24.04
     permissions: {}
     steps:
@@ -30,12 +69,22 @@ jobs:
     needs: validate-tag
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - uses: ./.github/actions/tooling
+        id: tooling
+        with:
+          platform: linux
       - name: Test and build Linux x86-64
+        env:
+          MAGAZIN_TOOLING_IMAGE: ${{ steps.tooling.outputs.image }}
+          NUITKA_CACHE_DIRECTORY: .nuitka-cache
         run: bash build-linux.sh
       - name: Package the executable and record its archive checksum
         working-directory: dist
@@ -55,14 +104,23 @@ jobs:
     needs: validate-tag
     runs-on: windows-2022
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - uses: ./.github/actions/tooling
+        id: tooling
+        with:
+          platform: windows
       - name: Test and build Windows x64 in Docker
         shell: powershell
-        run: .\build-windows.ps1 -Isolation process
+        env:
+          TOOLING_IMAGE: ${{ steps.tooling.outputs.image }}
+        run: .\build-windows.ps1 -Isolation process -ToolingImage $env:TOOLING_IMAGE -CacheDirectory .nuitka-cache
       - name: Record the Windows executable checksum
         shell: pwsh
         working-directory: dist
