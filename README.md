@@ -1,4 +1,4 @@
-# Magazin componente PC | Cosmin Zarzu 208ID
+# Magazin componente PC | 208ID
 
 Descarcă **`Magazin.release.exe`** din secțiunea **Releases** a depozitului GitHub și pornește-l prin dublu clic pe Windows x64. Nu sunt necesare Python, Qt sau Docker pentru utilizare. La pornire nu se încarcă și nu se suprascrie niciun inventar.
 
