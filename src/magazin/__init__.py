@@ -1,0 +1,1 @@
+"""Pachetul aplicației desktop Magazin."""

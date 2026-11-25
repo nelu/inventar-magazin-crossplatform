@@ -1,0 +1,5 @@
+*
+!Dockerfile.windows
+!Dockerfile.linux
+!requirements.txt
+!nuitka-build.py

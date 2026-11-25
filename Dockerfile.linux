@@ -1,0 +1,29 @@
+FROM quay.io/pypa/manylinux_2_28_x86_64
+
+ENV PATH=/opt/python/cp313-cp313/bin:$PATH \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONHASHSEED=0 \
+    NUITKA_CACHE_DIR=/nuitka-cache
+
+# The manylinux image supplies GCC and patchelf. Qt's platform plugins need
+# desktop libraries even when dependency scanning is done without a display.
+RUN dnf -y install \
+        dbus-libs fontconfig freetype libglvnd-egl libglvnd-glx \
+        libwayland-client libwayland-cursor libwayland-egl libxkbcommon-x11 \
+        xcb-util-cursor xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm \
+        dejavu-sans-fonts xorg-x11-server-Xvfb xorg-x11-xauth \
+    && dnf clean all
+
+COPY requirements.txt /build-tools/requirements.txt
+RUN manylinux-interpreters ensure cp313-cp313 \
+    && python -m pip install --no-cache-dir -r /build-tools/requirements.txt \
+    && python -m pip check
+
+# Nuitka embeds CPython; manylinux ships its static library separately.
+RUN tar -xf /opt/_internal/static-libs-for-embedding-only.tar.xz -C /opt/_internal
+
+COPY nuitka-build.py /build-tools/nuitka-build.py
+WORKDIR /app
+ENTRYPOINT ["/opt/python/cp313-cp313/bin/python", "/build-tools/nuitka-build.py"]
+CMD ["--build-app"]

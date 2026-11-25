@@ -1,0 +1,31 @@
+# escape=`
+
+ARG BUILD_TOOLS_IMAGE=amitie10g/visualstudio2022-workload-vctools:ltsc2019
+FROM ${BUILD_TOOLS_IMAGE} AS dependencies
+
+SHELL ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
+
+WORKDIR C:/app
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 `
+    PYTHONDONTWRITEBYTECODE=1 `
+    PYTHONHASHSEED=0 `
+    NUITKA_CACHE_DIR=C:\nuitka-cache
+
+RUN choco install python313 --version=3.13.17 --yes --no-progress
+
+COPY requirements.txt ./
+
+RUN python -m pip install --no-cache-dir -r requirements.txt
+RUN python -m pip check
+
+# Keep the helper accessible when the project is mounted over C:\app.
+COPY nuitka-build.py C:/build-tools/nuitka-build.py
+
+FROM dependencies AS cache-seed
+RUN python C:/build-tools/nuitka-build.py --warm-cache; exit $LASTEXITCODE
+
+FROM dependencies AS tooling
+COPY --from=cache-seed C:/nuitka-seed/ C:/nuitka-seed/
+ENTRYPOINT ["python.exe", "C:/build-tools/nuitka-build.py"]
+CMD ["--build-app"]

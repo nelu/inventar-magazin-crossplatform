@@ -1,0 +1,8 @@
+PySide6-Essentials==6.8.2.1
+shiboken6==6.8.2.1
+
+# Windows executable build
+# Needed by the installed SCons toolchain on LTSC 2019, outside pip's build environment.
+Nuitka==2.7.16
+ordered-set==4.1.0
+zstandard==0.23.0

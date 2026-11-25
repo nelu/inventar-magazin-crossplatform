@@ -1,0 +1,118 @@
+name: Build and publish release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-tag:
+    if: github.event.created && !github.event.deleted
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Validate version tag
+        shell: bash
+        run: |
+          number='(0|[1-9][0-9]*)'
+          version="^v${number}\.${number}\.${number}(-rc\.${number})?$"
+          if [[ ! $GITHUB_REF_NAME =~ $version ]]; then
+            echo 'Expected a tag such as v1.2.3 or v1.2.3-rc.1.' >&2
+            exit 1
+          fi
+
+  build-linux:
+    needs: validate-tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Test and build Linux x86-64
+        run: bash build-linux.sh
+      - name: Package the executable and record its archive checksum
+        working-directory: dist
+        run: |
+          tar --mode=0755 -czf Magazin-linux-x64.release.tar.gz Magazin-linux-x64.release
+          sha256sum Magazin-linux-x64.release.tar.gz > linux.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: magazin-linux-x64
+          path: |
+            dist/Magazin-linux-x64.release.tar.gz
+            dist/linux.sha256
+          if-no-files-found: error
+          compression-level: 0
+
+  build-windows:
+    needs: validate-tag
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Test and build Windows x64 in Docker
+        shell: powershell
+        run: .\build-windows.ps1 -Isolation process
+      - name: Record the Windows executable checksum
+        shell: pwsh
+        working-directory: dist
+        run: |
+          $hash = (Get-FileHash -LiteralPath 'Magazin.release.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path $PWD.Path 'windows.sha256'), "$hash  Magazin.release.exe`n")
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: magazin-windows-x64
+          path: |
+            dist/Magazin.release.exe
+            dist/windows.sha256
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: magazin-linux-x64
+          path: release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: magazin-windows-x64
+          path: release
+      - name: Verify the downloaded release assets
+        working-directory: release
+        run: |
+          test -s Magazin.release.exe
+          test -s Magazin-linux-x64.release.tar.gz
+          test -s windows.sha256
+          test -s linux.sha256
+          cat windows.sha256 linux.sha256 > SHA256SUMS
+          sha256sum --check --strict SHA256SUMS
+      - name: Create GitHub Release
+        shell: bash
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--verify-tag --generate-notes)
+          if [[ $GITHUB_REF_NAME == *-rc.* ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${flags[@]}" \
+            Magazin.release.exe Magazin-linux-x64.release.tar.gz SHA256SUMS
