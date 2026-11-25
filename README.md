@@ -99,14 +99,9 @@ Executabilul onefile a trecut testul de lansare prin X11/Xvfb, deschidere, „Sa
 
 ## Publicare pe GitHub
 
-Fluxul `.github/workflows/build-release.yml` pornește numai la trimiterea unei etichete de versiune noi: `v1.2.3` pentru o versiune stabilă sau `v1.2.3-rc.1` pentru o versiune preliminară. Creează eticheta pe un commit care conține deja fluxul:
+În secțiunea **Releases** a depozitului GitHub, publică o versiune cu o etichetă precum `v1.2.3` pentru o versiune stabilă sau `v1.2.3-rc.1` pentru o versiune preliminară. Eticheta trebuie să indice un commit care conține `.github/workflows/build-release.yml`. Trimiterea etichetei fără publicarea versiunii nu pornește fluxul.
 
-```bash
-git tag -a v1.2.3 -m 'Magazin v1.2.3'
-git push origin v1.2.3
-```
-
-GitHub Actions folosește aceleași scripturi Docker ca la compilarea locală și testează și compilează în paralel executabilele Windows și Linux x64. Pe runnerul `windows-2022`, scriptul folosește imaginea de bază LTSC 2022 și izolarea la nivel de proces (`-Isolation process`). După ce ambele compilări trec, fluxul publică `Magazin.release.exe`, `Magazin-linux-x64.release.tar.gz` și `SHA256SUMS` în secțiunea **Releases**. Dacă o compilare eșuează, versiunea nu se publică.
+GitHub Actions folosește aceleași scripturi Docker ca la compilarea locală și testează și compilează în paralel executabilele Windows și Linux x64. Pe runnerul `windows-2022`, scriptul folosește imaginea de bază LTSC 2022 și izolarea la nivel de proces (`-Isolation process`). După ce ambele compilări trec, fluxul atașează `Magazin.release.exe`, `Magazin-linux-x64.release.tar.gz` și `SHA256SUMS` la versiunea publicată. Versiunea trebuie să permită adăugarea fișierelor după publicare; fișierele cu același nume nu sunt suprascrise. Dacă o compilare eșuează, fluxul nu atașează fișierele.
 
 Pe Linux, descarcă arhiva și `SHA256SUMS` în același director, apoi verifică și pornește executabilul:
 

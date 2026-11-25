@@ -1,10 +1,8 @@
-name: Build and publish release
+name: Build and attach release assets
 
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -15,7 +13,6 @@ concurrency:
 
 jobs:
   validate-tag:
-    if: github.event.created && !github.event.deleted
     runs-on: ubuntu-24.04
     permissions: {}
     steps:
@@ -104,15 +101,11 @@ jobs:
           test -s linux.sha256
           cat windows.sha256 linux.sha256 > SHA256SUMS
           sha256sum --check --strict SHA256SUMS
-      - name: Create GitHub Release
+      - name: Attach assets to the published release
         shell: bash
         working-directory: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          flags=(--verify-tag --generate-notes)
-          if [[ $GITHUB_REF_NAME == *-rc.* ]]; then
-            flags+=(--prerelease)
-          fi
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${flags[@]}" \
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             Magazin.release.exe Magazin-linux-x64.release.tar.gz SHA256SUMS
